@@ -4,6 +4,8 @@ import numpy as np
 import datetime
 import time
 from collections import defaultdict
+
+from sklearn.metrics import confusion_matrix
 from . import mask as maskUtils
 import copy
 
@@ -310,6 +312,7 @@ class COCOeval:
                 'dtScores':     [d['score'] for d in dt],
                 'gtIgnore':     gtIg,
                 'dtIgnore':     dtIg,
+                'ious'    :     ious,
             }
 
     def accumulate(self, p = None):
@@ -495,6 +498,356 @@ class COCOeval:
     def __str__(self):
         self.summarize()
 
+
+class NamingCOCOEval:
+    # Interface for evaluating detection on the Microsoft COCO dataset.
+    #
+    # The usage for CocoEval is as follows:
+    #  cocoGt=..., cocoDt=...       # load dataset and results
+    #  E = CocoEval(cocoGt,cocoDt); # initialize CocoEval object
+    #  E.params.recThrs = ...;      # set parameters as desired
+    #  E.evaluate();                # run per image evaluation
+    #  E.accumulate();              # accumulate per image results
+    #  E.summarize();               # display summary metrics of results
+    # For example usage see evalDemo.m and http://mscoco.org/.
+    #
+    # The evaluation parameters are as follows (defaults in brackets):
+    #  imgIds     - [all] N img ids to use for evaluation
+    #  catIds     - [all] K cat ids to use for evaluation
+    #  iouThrs    - [.5:.05:.95] T=10 IoU thresholds for evaluation
+    #  recThrs    - [0:.01:1] R=101 recall thresholds for evaluation
+    #  areaRng    - [...] A=4 object area ranges for evaluation
+    #  maxDets    - [1 10 100] M=3 thresholds on max detections per image
+    #  iouType    - ['segm'] set iouType to 'segm', 'bbox' or 'keypoints'
+    #  iouType replaced the now DEPRECATED useSegm parameter.
+    #  useCats    - [1] if true use category labels for evaluation
+    # Note: if useCats=0 category labels are ignored as in proposal scoring.
+    # Note: multiple areaRngs [Ax2] and maxDets [Mx1] can be specified.
+    #
+    # evaluate(): evaluates detections on every image and every category and
+    # concats the results into the "evalImgs" with fields:
+    #  dtIds      - [1xD] id for each of the D detections (dt)
+    #  gtIds      - [1xG] id for each of the G ground truths (gt)
+    #  dtMatches  - [TxD] matching gt id at each IoU or 0
+    #  gtMatches  - [TxG] matching dt id at each IoU or 0
+    #  dtScores   - [1xD] confidence of each dt
+    #  gtIgnore   - [1xG] ignore flag for each gt
+    #  dtIgnore   - [TxD] ignore flag for each dt at each IoU
+    #
+    # accumulate(): accumulates the per-image, per-category evaluation
+    # results in "evalImgs" into the dictionary "eval" with fields:
+    #  params     - parameters used for evaluation
+    #  date       - date evaluation was performed
+    #  counts     - [T,R,K,A,M] parameter dimensions (see above)
+    #  precision  - [TxRxKxAxM] precision for every evaluation setting
+    #  recall     - [TxKxAxM] max recall for every evaluation setting
+    # Note: precision and recall==-1 for settings with no gt objects.
+    # See also coco, mask, pycocoDemo, pycocoEvalDemo
+    #
+    def __init__(self, cocoGt=None, cocoDt=None, iouType='segm'):
+        '''
+        Initialize CocoEval using coco APIs for gt and dt
+        :param cocoGt: coco object with ground truth annotations
+        :param cocoDt: coco object with detection results
+        :return: None
+        '''
+        if not iouType:
+            print('iouType not specified. use default iouType segm')
+        self.cocoGt   = cocoGt              # ground truth COCO API
+        self.cocoDt   = cocoDt              # detections COCO API
+        self.evalImgs = defaultdict(list)   # per-image per-category evaluation results [KxAxI] elements
+        self.eval     = {}                  # accumulated evaluation results
+        self._gts = defaultdict(list)       # gt for evaluation
+        self._dts = defaultdict(list)       # dt for evaluation
+        self.params = Params(iouType=iouType) # parameters
+        self._paramsEval = {}               # parameters for evaluation
+        self.stats = []                     # result summarization
+        self.ious = {}                      # ious between all gts and dts
+        # edit area for avoiding redundant calculations
+        self.params.areaRng = [[0 ** 2, 1e5 ** 2],]
+        self.params.areaRngLbl = ['all',]
+        self.params.maxDets = [100,]
+        self.params.iouThrs = [0.5,]
+        # init confusion matrix to none
+        self.confusion_matrix = None
+        self.confusion_matrix_dt = None
+        self.gt_count = None
+        # keep counter of every false positive for a ground truth
+        self.fpcounter = defaultdict(lambda: 0)
+
+        if not cocoGt is None:
+            self.params.imgIds = sorted(cocoGt.getImgIds())
+            self.params.catIds = sorted(cocoGt.getCatIds())
+
+
+    def _prepare(self):
+        '''
+        Prepare ._gts and ._dts for evaluation based on params
+        :return: None
+        '''
+        def _toMask(anns, coco):
+            # modify ann['segmentation'] by reference
+            for ann in anns:
+                rle = coco.annToRLE(ann)
+                ann['segmentation'] = rle
+
+        p = self.params
+        gts=self.cocoGt.loadAnns(self.cocoGt.getAnnIds(imgIds=p.imgIds))
+        dts=self.cocoDt.loadAnns(self.cocoDt.getAnnIds(imgIds=p.imgIds))
+
+        # convert ground truth to mask if iouType == 'segm'
+        if p.iouType == 'segm':
+            _toMask(gts, self.cocoGt)
+            _toMask(dts, self.cocoDt)
+        # set ignore flag
+        for gt in gts:
+            gt['ignore'] = gt['ignore'] if 'ignore' in gt else 0
+            gt['ignore'] = 'iscrowd' in gt and gt['iscrowd']
+            if p.iouType == 'keypoints':
+                gt['ignore'] = (gt['num_keypoints'] == 0) or gt['ignore']
+        self._gts = defaultdict(list)       # gt for evaluation
+        self._dts = defaultdict(list)       # dt for evaluation
+        for gt in gts:
+            #self._gts[gt['image_id'], gt['category_id']].append(gt)
+            self._gts[gt['image_id']].append(gt)
+        for dt in dts:
+            #self._dts[dt['image_id'], dt['category_id']].append(dt)
+            self._dts[dt['image_id']].append(dt)
+
+        self.evalImgs = defaultdict(list)   # per-image per-category evaluation results
+        self.eval     = {}                  # accumulated evaluation results
+
+
+    def evaluate(self):
+        '''
+        Run per image evaluation on given images and store results (a list of dict) in self.evalImgs
+        :return: None
+        '''
+        # init confusion matrix to be all zeros
+        K = len(self.params.catIds)
+        self.confusion_matrix = np.zeros((K, K))
+        self.confusion_matrix_dt = np.zeros((K, K))
+        self.gt_count = np.zeros(K)
+        # also init mapping
+        self.catMapping = dict([(c, i) for i, c in enumerate(sorted(self.params.catIds))])
+
+        tic = time.time()
+        print('Running per image evaluation...')
+        p = self.params
+        # add backward compatibility if useSegm is specified in params
+        if not p.useSegm is None:
+            p.iouType = 'segm' if p.useSegm == 1 else 'bbox'
+            print('useSegm (deprecated) is not None. Running {} evaluation'.format(p.iouType))
+        print('Evaluate annotation type *{}*'.format(p.iouType))
+        p.imgIds = list(np.unique(p.imgIds))
+        if p.useCats:
+            p.catIds = list(np.unique(p.catIds))
+        p.maxDets = sorted(p.maxDets)
+        self.params=p
+
+        self._prepare()
+        # loop through images, area range, max detection number
+        #catIds = p.catIds if p.useCats else [-1]
+
+        if p.iouType == 'segm' or p.iouType == 'bbox':
+            computeIoU = self.computeIoU
+        elif p.iouType == 'keypoints':
+            raise NotImplementedError
+        self.ious = {
+                 imgId : computeIoU(imgId) \
+                        for imgId in p.imgIds
+                    }
+
+        evaluateImg = self.evaluateImg
+        maxDet = p.maxDets[-1]
+        self.evalImgs = [evaluateImg(imgId, areaRng, maxDet)
+                 for areaRng in p.areaRng
+                 for imgId in p.imgIds
+            ]
+        self._paramsEval = copy.deepcopy(self.params)
+        toc = time.time()
+        print('DONE (t={:0.2f}s).'.format(toc-tic))
+
+
+    def computeIoU(self, imgId, ):
+        ''' compute IoU between objects of same image id regardless of class
+        (so that we can match and calculate naming error later)
+        '''
+        p = self.params
+        gt = self._gts[imgId]
+        dt = self._dts[imgId]
+        if len(gt) == 0 and len(dt) == 0:
+            return []
+        inds = np.argsort([-d['score'] for d in dt], kind='mergesort')
+        dt = [dt[i] for i in inds]
+        if len(dt) > p.maxDets[-1]:
+            dt=dt[0:p.maxDets[-1]]
+        if p.iouType == 'segm':
+            g = [g['segmentation'] for g in gt]
+            d = [d['segmentation'] for d in dt]
+        elif p.iouType == 'bbox':
+            g = [g['bbox'] for g in gt]
+            d = [d['bbox'] for d in dt]
+        else:
+            raise Exception('unknown iouType for iou computation')
+        # compute iou between each dt and gt region
+        iscrowd = [int(o['iscrowd']) for o in gt]
+        ious = maskUtils.iou(d, g, iscrowd)
+        return ious
+
+
+    def evaluateImg(self, imgId, aRng, maxDet):
+        '''
+        perform evaluation for single category and image
+        :return: dict (single image results)
+        '''
+        p = self.params
+        gt = self._gts[imgId]
+        dt = self._dts[imgId]
+
+        # store a `gt id` dict which keeps track of each gt considered in the matching process, and its classid
+        gtid_dict = dict()
+
+        if len(gt) == 0 and len(dt) == 0:
+            return None
+
+        for g in gt:
+            if g['ignore'] or (g['area']<aRng[0] or g['area']>aRng[1]):
+                g['_ignore'] = 1
+            else:
+                g['_ignore'] = 0
+
+        # sort dt highest score first, sort gt ignore last
+        gtind = np.argsort([g['_ignore'] for g in gt], kind='mergesort')
+        gt = [gt[i] for i in gtind]
+        dtind = np.argsort([-d['score'] for d in dt], kind='mergesort')
+        dt = [dt[i] for i in dtind[0:maxDet]]
+        iscrowd = [int(o['iscrowd']) for o in gt]
+        # load computed ious
+        ious = self.ious[imgId][:, gtind] if len(self.ious[imgId]) > 0 else self.ious[imgId]
+
+        T = len(p.iouThrs)
+        G = len(gt)
+        D = len(dt)
+        gtm  = np.zeros((T,G))
+        dtm  = np.zeros((T,D))
+        gtIg = np.array([g['_ignore'] for g in gt])
+        dtIg = np.zeros((T,D))
+
+        if not len(ious)==0:
+            for tind, t in enumerate(p.iouThrs[:1]):
+                for dind, d in enumerate(dt):
+                    # information about best match so far (m=-1 -> unmatched)
+                    # also keep a 'fp' match which finds the best localization anyway
+                    iou, iou_fp = min([t,1 - 1e-10]), t - 1e-10
+                    m   = -1
+                    m_fp = -1       # this is the best ground truth match
+                    for gind, g in enumerate(gt):
+                        # if this gt already matched, and not a crowd, continue
+                        if gtm[tind,gind]>0 and not iscrowd[gind]:
+                            continue
+                        # if dt matched to reg gt, and on ignore gt, stop
+                        if m>-1 and gtIg[m]==0 and gtIg[gind]==1:
+                            break
+                        # continue to next gt unless better match made
+                        if ious[dind,gind] < iou:
+                            continue
+                        # if match successful and best so far, store appropriately
+                        iou=ious[dind,gind]
+                        m=gind
+
+                    # if this detection couldn't be matched, find the best possible candidate
+                    # if it was matched, then use that match as the match for fp case too
+                    if m == -1:
+                        for gind, g in enumerate(gt):
+                            if iscrowd[gind]:
+                                continue
+                            if ious[dind, gind] > iou_fp:
+                                iou_fp = ious[dind, gind]
+                                m_fp = gind
+                    else:
+                        iou_fp = iou
+                        m_fp = m
+
+                    # if this detection had any match
+                    if m_fp != -1:
+                        gt_fpCat = self.catMapping[gt[m_fp]['category_id']]
+                        dt_fpCat = self.catMapping[d['category_id']]
+                        self.confusion_matrix_dt[dt_fpCat, gt_fpCat] += 1
+                        # add this to gtid dict since this gt was considered
+                        gtid_dict[m_fp] = gt_fpCat
+                        # add this to false positive counter too
+                        if gt_fpCat != dt_fpCat:
+                            self.fpcounter[(imgId, m_fp, gt_fpCat)] += 1
+
+                    # if match made store id of match for both dt and gt
+                    if m ==-1:
+                        continue
+                    dtIg[tind,dind] = gtIg[m]
+                    dtm[tind,dind]  = gt[m]['id']
+                    gtm[tind,m]     = d['id']
+                    # add corresponding entry to confusion matrix 
+                    gtCat = self.catMapping[gt[m]['category_id'] ]
+                    dtCat = self.catMapping[d['category_id']]
+                    #assert dtCat >= 0 and gtCat >= 0, "gtCat = {}, dtCat = {}".format(gtCat, dtCat)
+                    # if gtCat < 0 or gtCat >= K:
+                    #     continue
+                    # if dtCat < 0 or dtCat >= K:
+                    #     continue
+                    # update confusion matrix
+                    self.confusion_matrix[dtCat, gtCat] += 1
+
+        # add to gt list
+        for gtid, gtcls in gtid_dict.items():
+            self.gt_count[gtcls] += 1
+
+        # set unmatched detections outside of area range to ignore
+        a = np.array([d['area']<aRng[0] or d['area']>aRng[1] for d in dt]).reshape((1, len(dt)))
+        dtIg = np.logical_or(dtIg, np.logical_and(dtm==0, np.repeat(a,T,0)))
+        # store results for given image and category
+        return {
+                'image_id':     imgId,
+                'aRng':         aRng,
+                'maxDet':       maxDet,
+                'dtIds':        [d['id'] for d in dt],
+                'gtIds':        [g['id'] for g in gt],
+                'dtMatches':    dtm,
+                'gtMatches':    gtm,
+                'dtScores':     [d['score'] for d in dt],
+                'gtIgnore':     gtIg,
+                'dtIgnore':     dtIg,
+                'ious'    :     ious,
+            }
+
+
+    def accumulate(self, p = None):
+        '''
+        Accumulate per image evaluation results and store the result in self.eval
+        :param p: input params for evaluation
+        :return: None
+        '''
+        print('Accumulating evaluation results...')
+        tic = time.time()
+        if not self.evalImgs:
+            print('Please run evaluate() first')
+        # allows input customized parameters
+        if p is None:
+            p = self.params
+        p.catIds = p.catIds if p.useCats == 1 else [-1]
+        # init relevant variables here
+        self.eval = {
+            'params': p,
+            'date': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'confusion_matrix': self.confusion_matrix,
+        }
+        toc = time.time()
+        print('DONE (t={:0.2f}s).'.format(toc-tic))
+
+
+    def __str__(self):
+        print(self.eval['confusion_matrix'])
+
+
 class Params:
     '''
     Params for coco evaluation api
@@ -532,3 +885,4 @@ class Params:
         self.iouType = iouType
         # useSegm is deprecated
         self.useSegm = None
+
