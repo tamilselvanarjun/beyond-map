@@ -19,3 +19,5 @@ PythonAPI/pycocotools.egg-info/
 PythonAPI/pycocotools/__pycache__/
 PythonAPI/pycocotools/_mask.cpython-*.so
 
+PythonAPI/pycocotools/_cocoeval.c
+PythonAPI/pycocotools/_cocoeval*so

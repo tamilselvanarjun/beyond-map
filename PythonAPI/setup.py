@@ -10,6 +10,12 @@ ext_modules = [
         sources=['../common/maskApi.c', 'pycocotools/_mask.pyx'],
         include_dirs = [np.get_include(), '../common'],
         extra_compile_args=['-Wno-cpp', '-Wno-unused-function', '-std=c99'],
+    ),
+    Extension(
+        'pycocotools._cocoeval',
+        sources=['pycocotools/_cocoeval.pyx'],
+        include_dirs = [np.get_include(), '../common'],
+        extra_compile_args=['-Wno-cpp', '-Wno-unused-function', '-std=c99'],
     )
 ]
 

@@ -23,7 +23,7 @@ from libc.stdlib cimport malloc, free
 np.import_array()
 
 # import numpy C function
-# we use PyArray_ENABLEFLAGS to make Numpy ndarray responsible to memoery management
+# we use PyArray_ENABLEFLAGS to make Numpy ndarray responsible to memory management
 cdef extern from "numpy/arrayobject.h":
     void PyArray_ENABLEFLAGS(np.ndarray arr, int flags)
 
@@ -168,7 +168,7 @@ def area(rleObjs):
     return a
 
 # iou computation. support function overload (RLEs-RLEs and bbox-bbox).
-def iou( dt, gt, pyiscrowd ):
+def iou(dt, gt, pyiscrowd):
     def _preproc(objs):
         if len(objs) == 0:
             return objs

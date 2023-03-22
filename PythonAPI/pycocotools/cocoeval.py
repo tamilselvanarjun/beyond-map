@@ -1,13 +1,19 @@
-__author__ = 'tsungyi'
+__author__ = 'rohitrango'
+'''
+Code adapted from original pycocotools: https://github.com/ppwwyyxx/cocoapi
+'''
 
 import numpy as np
 import datetime
 import time
 from collections import defaultdict
 
-from sklearn.metrics import confusion_matrix
 from . import mask as maskUtils
 import copy
+import pycocotools._cocoeval as _cocoeval
+import os
+
+DEBUG = os.environ.get("DEBUG_PYCOCOTOOLS")
 
 class COCOeval:
     # Interface for evaluating detection on the Microsoft COCO dataset.
@@ -82,7 +88,6 @@ class COCOeval:
             self.params.imgIds = sorted(cocoGt.getImgIds())
             self.params.catIds = sorted(cocoGt.getCatIds())
 
-
     def _prepare(self):
         '''
         Prepare ._gts and ._dts for evaluation based on params
@@ -147,9 +152,16 @@ class COCOeval:
             computeIoU = self.computeIoU
         elif p.iouType == 'keypoints':
             computeIoU = self.computeOks
-        self.ious = {(imgId, catId): computeIoU(imgId, catId) \
-                        for imgId in p.imgIds
-                        for catId in catIds}
+
+        s1 = time.time()
+        if DEBUG:
+            self.ious = {(imgId, catId): computeIoU(imgId, catId) \
+                            for imgId in p.imgIds
+                            for catId in catIds}
+        else:
+            self.ious = _cocoeval.computeIoU(dict(self._gts), dict(self._dts), np.array(p.imgIds, dtype=np.int32), \
+                                             np.array(p.catIds, dtype=np.int32), int(p.useCats), int(p.maxDets[-1]), p.iouType)
+        s2 = time.time()
 
         evaluateImg = self.evaluateImg
         maxDet = p.maxDets[-1]
@@ -160,7 +172,8 @@ class COCOeval:
              ]
         self._paramsEval = copy.deepcopy(self.params)
         toc = time.time()
-        print('DONE (t={:0.2f}s).'.format(toc-tic))
+        # print('DONE (t={:0.2f}s).'.format(toc-tic))
+        print("DONE: (t={:0.2f}s) (t={:0.2f}s)".format(toc-tic, s2-s1))
 
     def computeIoU(self, imgId, catId):
         p = self.params
@@ -170,7 +183,7 @@ class COCOeval:
         else:
             gt = [_ for cId in p.catIds for _ in self._gts[imgId,cId]]
             dt = [_ for cId in p.catIds for _ in self._dts[imgId,cId]]
-        if len(gt) == 0 and len(dt) ==0:
+        if len(gt) == 0 and len(dt) == 0:
             return []
         inds = np.argsort([-d['score'] for d in dt], kind='mergesort')
         dt = [dt[i] for i in inds]
@@ -185,7 +198,6 @@ class COCOeval:
             d = [d['bbox'] for d in dt]
         else:
             raise Exception('unknown iouType for iou computation')
-
         # compute iou between each dt and gt region
         iscrowd = [int(o['iscrowd']) for o in gt]
         ious = maskUtils.iou(d,g,iscrowd)
@@ -363,7 +375,6 @@ class COCOeval:
                     if len(E) == 0:
                         continue
                     dtScores = np.concatenate([e['dtScores'][0:maxDet] for e in E])
-
                     # different sorting method generates slightly different results.
                     # mergesort is used to be consistent as Matlab implementation.
                     inds = np.argsort(-dtScores, kind='mergesort')
@@ -397,7 +408,6 @@ class COCOeval:
                         # numpy is slow without cython optimization for accessing elements
                         # use python array gets significant speed improvement
                         pr = pr.tolist(); q = q.tolist()
-
                         for i in range(nd-1, 0, -1):
                             if pr[i] > pr[i-1]:
                                 pr[i-1] = pr[i]
@@ -420,7 +430,7 @@ class COCOeval:
             'scores': scores,
         }
         toc = time.time()
-        print('DONE (t={:0.2f}s).'.format( toc-tic))
+        print('DONE (t={:0.2f}s).'.format(toc-tic))
 
     def summarize(self):
         '''
@@ -607,16 +617,15 @@ class NamingCOCOEval:
                 gt['ignore'] = (gt['num_keypoints'] == 0) or gt['ignore']
         self._gts = defaultdict(list)       # gt for evaluation
         self._dts = defaultdict(list)       # dt for evaluation
+
+        # Append in a category-agnostic way
         for gt in gts:
-            #self._gts[gt['image_id'], gt['category_id']].append(gt)
             self._gts[gt['image_id']].append(gt)
         for dt in dts:
-            #self._dts[dt['image_id'], dt['category_id']].append(dt)
             self._dts[dt['image_id']].append(dt)
 
         self.evalImgs = defaultdict(list)   # per-image per-category evaluation results
         self.eval     = {}                  # accumulated evaluation results
-
 
     def evaluate(self):
         '''
@@ -648,7 +657,6 @@ class NamingCOCOEval:
         self._prepare()
         # loop through images, area range, max detection number
         #catIds = p.catIds if p.useCats else [-1]
-
         if p.iouType == 'segm' or p.iouType == 'bbox':
             computeIoU = self.computeIoU
         elif p.iouType == 'keypoints':
@@ -656,7 +664,7 @@ class NamingCOCOEval:
         self.ious = {
                  imgId : computeIoU(imgId) \
                         for imgId in p.imgIds
-                    }
+            }
 
         evaluateImg = self.evaluateImg
         maxDet = p.maxDets[-1]
@@ -668,8 +676,7 @@ class NamingCOCOEval:
         toc = time.time()
         print('DONE (t={:0.2f}s).'.format(toc-tic))
 
-
-    def computeIoU(self, imgId, ):
+    def computeIoU(self, imgId,):
         ''' compute IoU between objects of same image id regardless of class
         (so that we can match and calculate naming error later)
         '''
@@ -694,7 +701,6 @@ class NamingCOCOEval:
         iscrowd = [int(o['iscrowd']) for o in gt]
         ious = maskUtils.iou(d, g, iscrowd)
         return ious
-
 
     def evaluateImg(self, imgId, aRng, maxDet):
         '''
@@ -789,11 +795,6 @@ class NamingCOCOEval:
                     # add corresponding entry to confusion matrix 
                     gtCat = self.catMapping[gt[m]['category_id'] ]
                     dtCat = self.catMapping[d['category_id']]
-                    #assert dtCat >= 0 and gtCat >= 0, "gtCat = {}, dtCat = {}".format(gtCat, dtCat)
-                    # if gtCat < 0 or gtCat >= K:
-                    #     continue
-                    # if dtCat < 0 or dtCat >= K:
-                    #     continue
                     # update confusion matrix
                     self.confusion_matrix[dtCat, gtCat] += 1
 
@@ -846,7 +847,6 @@ class NamingCOCOEval:
 
     def __str__(self):
         print(self.eval['confusion_matrix'])
-
 
 class Params:
     '''
