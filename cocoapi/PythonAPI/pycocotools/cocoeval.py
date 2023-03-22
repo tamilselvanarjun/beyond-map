@@ -65,11 +65,12 @@ class COCOeval:
     # Data, paper, and tutorials available at:  http://mscoco.org/
     # Code written by Piotr Dollar and Tsung-Yi Lin, 2015.
     # Licensed under the Simplified BSD License [see coco/license.txt]
-    def __init__(self, cocoGt=None, cocoDt=None, iouType='segm'):
+    def __init__(self, cocoGt=None, cocoDt=None, iouType='segm', debug=DEBUG):
         '''
         Initialize CocoEval using coco APIs for gt and dt
         :param cocoGt: coco object with ground truth annotations
         :param cocoDt: coco object with detection results
+        :param debug: debugging for using python or C++ backend
         :return: None
         '''
         if not iouType:
@@ -87,6 +88,7 @@ class COCOeval:
         if not cocoGt is None:
             self.params.imgIds = sorted(cocoGt.getImgIds())
             self.params.catIds = sorted(cocoGt.getCatIds())
+        self.debug = int(debug)
 
     def _prepare(self):
         '''
@@ -154,7 +156,7 @@ class COCOeval:
             computeIoU = self.computeOks
 
         s1 = time.time()
-        if DEBUG:
+        if self.debug:
             self.ious = {(imgId, catId): computeIoU(imgId, catId) \
                             for imgId in p.imgIds
                             for catId in catIds}
@@ -165,11 +167,16 @@ class COCOeval:
 
         evaluateImg = self.evaluateImg
         maxDet = p.maxDets[-1]
-        self.evalImgs = [evaluateImg(imgId, catId, areaRng, maxDet)
-                 for catId in catIds
-                 for areaRng in p.areaRng
-                 for imgId in p.imgIds
-             ]
+        if self.debug:
+            self.evalImgs = [evaluateImg(imgId, catId, areaRng, maxDet)
+                    for catId in catIds
+                    for areaRng in p.areaRng
+                    for imgId in p.imgIds
+                ]
+        else:
+            self.evalImgs = _cocoeval.evaluateImg(np.array(p.catIds, dtype=np.int32), np.array(p.imgIds, dtype=np.int32), np.array(p.areaRng, dtype=np.float32), int(p.useCats),
+                                                    dict(self._gts), dict(self._dts), int(maxDet), np.array(p.iouThrs, dtype=np.float32), self.ious)
+
         self._paramsEval = copy.deepcopy(self.params)
         toc = time.time()
         # print('DONE (t={:0.2f}s).'.format(toc-tic))
@@ -258,7 +265,7 @@ class COCOeval:
         else:
             gt = [_ for cId in p.catIds for _ in self._gts[imgId,cId]]
             dt = [_ for cId in p.catIds for _ in self._dts[imgId,cId]]
-        if len(gt) == 0 and len(dt) ==0:
+        if len(gt) == 0 and len(dt) == 0:
             return None
 
         for g in gt:

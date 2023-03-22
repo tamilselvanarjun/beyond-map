@@ -1,5 +1,6 @@
 from setuptools import setup, Extension
 import numpy as np
+from Cython.Build import cythonize
 
 # To compile and install locally run "python setup.py build_ext --inplace"
 # To install library to Python site-packages run "python setup.py build_ext install"
@@ -29,5 +30,5 @@ setup(
         'matplotlib>=2.1.0'
     ],
     version='2.0',
-    ext_modules= ext_modules
+    ext_modules=cythonize(ext_modules),
 )

@@ -1,23 +1,25 @@
-images/
-annotations/
-results/
-external/
-.DS_Store
+cocoapi/images/
+cocoapi/annotations/
+cocoapi/results/
+cocoapi/external/
+cocoapi/.DS_Store
 
-MatlabAPI/analyze*/
-MatlabAPI/visualize*/
-MatlabAPI/private/maskApiMex.*
+cocoapi/MatlabAPI/analyze*/
+cocoapi/MatlabAPI/visualize*/
+cocoapi/MatlabAPI/private/maskApiMex.*
 
-PythonAPI/pycocotools/__init__.pyc
-PythonAPI/pycocotools/_mask.c
-PythonAPI/pycocotools/_mask.so
-PythonAPI/pycocotools/coco.pyc
-PythonAPI/pycocotools/cocoeval.pyc
-PythonAPI/pycocotools/mask.pyc
-PythonAPI/build/
-PythonAPI/pycocotools.egg-info/
-PythonAPI/pycocotools/__pycache__/
-PythonAPI/pycocotools/_mask.cpython-*.so
+cocoapi/PythonAPI/pycocotools/__init__.pyc
+cocoapi/PythonAPI/pycocotools/_mask.c
+cocoapi/PythonAPI/pycocotools/_mask.so
+cocoapi/PythonAPI/pycocotools/coco.pyc
+cocoapi/PythonAPI/pycocotools/cocoeval.pyc
+cocoapi/PythonAPI/pycocotools/mask.pyc
+cocoapi/PythonAPI/build/
+cocoapi/PythonAPI/pycocotools.egg-info/
+cocoapi/PythonAPI/pycocotools/__pycache__/
+cocoapi/PythonAPI/pycocotools/_mask.cpython-*.so
 
-PythonAPI/pycocotools/_cocoeval.c
-PythonAPI/pycocotools/_cocoeval*so
+cocoapi/PythonAPI/pycocotools/_cocoeval.c
+cocoapi/PythonAPI/pycocotools/_cocoeval*so
+cocoapi/PythonAPI/cython_debug
+
