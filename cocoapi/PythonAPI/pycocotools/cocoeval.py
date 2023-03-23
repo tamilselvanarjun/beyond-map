@@ -173,6 +173,32 @@ class COCOeval:
                     for areaRng in p.areaRng
                     for imgId in p.imgIds
                 ]
+            # evalImgs2 = _cocoeval.evaluateImg(np.array(p.catIds, dtype=np.int32), np.array(p.imgIds, dtype=np.int32), np.array(p.areaRng, dtype=np.float32), int(p.useCats),
+            #                                         dict(self._gts), dict(self._dts), int(maxDet), np.array(p.iouThrs, dtype=np.float32), self.ious)
+            # assert len(self.evalImgs) == len(evalImgs2)
+            # for ev1, ev2 in zip(self.evalImgs, evalImgs2):
+            #     if (ev1 is None and ev2 is None) or (ev1 is not None and ev2 is not None):
+            #         pass
+            #     else:
+            #         print(ev1, ev2)
+            #         input("assert Enter. ")
+            #     if ev2 is None:
+            #         continue
+            #     for k in ev2.keys():
+            #         try:
+            #             if isinstance(ev2[k], (list, tuple, str, int, float)):
+            #                 if (ev1[k] != ev2[k]):
+            #                     print(k, ev1[k], ev2[k], type(ev1[k]), type(ev2[k]))
+            #                     input("loop1 Enter. ")
+            #             else:
+            #                 if np.abs(1.0*ev1[k]-1.0*ev2[k]).sum() > 1e-2:
+            #                     print(k, ev1[k] , ev2[k], type(ev1[k]), type(ev2[k]))
+            #                     input("loop2 Enter. ")
+            #         except Exception as e:
+            #             print(e)
+            #             input("exception Enter. ")
+            #             print(k, ev1[k], ev2[k], type(ev1[k]), type(ev2[k]))
+            #             print(ev1[k].shape, ev2[k].shape)
         else:
             self.evalImgs = _cocoeval.evaluateImg(np.array(p.catIds, dtype=np.int32), np.array(p.imgIds, dtype=np.int32), np.array(p.areaRng, dtype=np.float32), int(p.useCats),
                                                     dict(self._gts), dict(self._dts), int(maxDet), np.array(p.iouThrs, dtype=np.float32), self.ious)
@@ -265,6 +291,7 @@ class COCOeval:
         else:
             gt = [_ for cId in p.catIds for _ in self._gts[imgId,cId]]
             dt = [_ for cId in p.catIds for _ in self._dts[imgId,cId]]
+
         if len(gt) == 0 and len(dt) == 0:
             return None
 

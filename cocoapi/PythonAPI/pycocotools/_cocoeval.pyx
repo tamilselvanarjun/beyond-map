@@ -33,7 +33,7 @@ def computeIoU(dict _gts, dict _dts, int[:] imgIds, int[:] catIds, int useCats, 
                 gt = [_ for cId in catIds for _ in _gts.get((imgId, cId), [])]
                 dt = [_ for cId in catIds for _ in _dts.get((imgId, cId), [])]
 
-            if len(gt) == 0 or len(dt) == 0:
+            if len(gt) == 0 and len(dt) == 0:
                 all_ious[key] = []
                 continue
 
@@ -56,7 +56,7 @@ def computeIoU(dict _gts, dict _dts, int[:] imgIds, int[:] catIds, int useCats, 
             all_ious[key] = ious    
     return all_ious 
 
-cpdef list evaluateImg(int[:] catIds, int[:] imgIds, float[:, :] areaRng, int useCats, dict _gts, dict _dts, int maxDet, float[:] iouThrs, dict all_ious):
+def evaluateImg(int[:] catIds, int[:] imgIds, float[:, :] areaRng, int useCats, dict _gts, dict _dts, int maxDet, float[:] iouThrs, dict all_ious):
     '''
     perform evaluation for single category and image
     :return: dict (single image results)
@@ -79,8 +79,10 @@ cpdef list evaluateImg(int[:] catIds, int[:] imgIds, float[:, :] areaRng, int us
     cdef int m
     cdef dict d, g
     cdef float t
-    cdef int[:, :] a
+    # cdef np[:, :] a
+    cdef np.ndarray[np.uint8_t, ndim=2, cast=True] a
     cdef int valid_ioumat
+    cdef int cId
 
     T = len(iouThrs)
 
@@ -95,7 +97,7 @@ cpdef list evaluateImg(int[:] catIds, int[:] imgIds, float[:, :] areaRng, int us
                     gt = [_ for cId in catIds for _ in _gts.get((imgId, cId), [])]
                     dt = [_ for cId in catIds for _ in _dts.get((imgId, cId), [])]
                     
-                if len(gt) == 0 or len(dt) == 0:
+                if len(gt) == 0 and len(dt) == 0:
                     ret_dict.append(None)
                     continue
 
@@ -111,7 +113,7 @@ cpdef list evaluateImg(int[:] catIds, int[:] imgIds, float[:, :] areaRng, int us
                 dt = [dt[i] for i in dtind[0:maxDet]]
                 iscrowd = [int(o['iscrowd']) for o in gt]
                 # get ious
-                ious = all_ious[imgId, catId][:, gtind] if len(all_ious[imgId, catId]) > 0 else np.array([[]], dtype=np.float32)
+                ious = all_ious[imgId, catId][:, gtind] if len(all_ious[imgId, catId]) > 0 else np.array([[]], dtype=np.float64)
                 valid_ioumat = int(len(all_ious[imgId, catId]) > 0)
                 G = len(gt)
                 D = len(dt)
@@ -119,9 +121,9 @@ cpdef list evaluateImg(int[:] catIds, int[:] imgIds, float[:, :] areaRng, int us
                 dtm  = np.zeros((T,D), dtype=np.int64)
                 gtIg = np.array([g['_ignore'] for g in gt], dtype=np.int32)
                 dtIg = np.zeros((T,D), dtype=np.int32)
-                if not ious.shape[1] == 0 and not ious.shape[0] == 0:
+                if not (not valid_ioumat or ious.shape[0] == 0):
                     # for tind, t in enumerate(p.iouThrs):
-                    for tind in range(len(iouThrs)):
+                    for tind in range(T):
                         t = iouThrs[tind]
                         for dind in range(D):
                             d = dt[dind]
@@ -149,8 +151,9 @@ cpdef list evaluateImg(int[:] catIds, int[:] imgIds, float[:, :] areaRng, int us
                             dtm[tind,dind]  = gt[m]['id']
                             gtm[tind,m]     = d['id']
                 # set unmatched detections outside of area range to ignore
-                a = np.array([[d['area']<aRng[0] or d['area']>aRng[1] for d in dt]], dtype=np.int32)
-                dtIgtmp = np.logical_or(dtIg, np.logical_and(dtm == int(0), np.repeat(a,T,0)))
+                a = np.array([[d['area']<aRng[0] or d['area']>aRng[1] for d in dt]], dtype=bool)
+                dtIgbool = np.logical_or(np.asarray(dtIg)>0, np.logical_and(np.asarray(dtm)==0, np.repeat(a,T,0)))
+
                 # store results for given image and category
                 ret_dict.append({
                         'image_id':     imgId,
@@ -163,7 +166,7 @@ cpdef list evaluateImg(int[:] catIds, int[:] imgIds, float[:, :] areaRng, int us
                         'gtMatches':    np.array(gtm),
                         'dtScores':     [d['score'] for d in dt],
                         'gtIgnore':     np.array(gtIg),
-                        'dtIgnore':     dtIgtmp,
+                        'dtIgnore':     dtIgbool, 
                         'ious'    :     np.array(ious) if valid_ioumat else [],
                     })
     return ret_dict
